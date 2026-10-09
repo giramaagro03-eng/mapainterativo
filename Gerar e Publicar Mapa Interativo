@@ -58,7 +58,7 @@ if not coluna_especie:
 especies_unicas = sorted(poligonos_fauna[coluna_especie].dropna().unique())
 
 for especie in especies_unicas:
-    grupo_especie = folium.FeatureGroup(name=f"Polígono: {especie}", show=False)
+    grupo_especie = folium.FeatureGroup(name=f"Espécie: {especie}", show=False)
     
     # Filtrar o polígono da espécie atual
     poly_sub = poligonos_fauna[poligonos_fauna[coluna_especie] == especie]
