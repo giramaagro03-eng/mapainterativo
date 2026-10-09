@@ -1,107 +1,43 @@
-import geopandas as gpd
-import folium
+name: Gerar e Publicar Mapa Interativo
 
-# 1. Carregar os dados
-grid = gpd.read_file('grid_2kmX2km.shp').to_crs(epsg=4326)
-poligonos_fauna = gpd.read_file('Poligono_ESPECIES_anfibios.shp').to_crs(epsg=4326)
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
-# Carregar pontos se o ficheiro existir
-try:
-    pontos_fauna = gpd.read_file('lista_ESPECIES_anfibios.shp').to_crs(epsg=4326)
-    tem_pontos = True
-except Exception:
-    tem_pontos = False
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
-# 2. Centrar o mapa no Grid/Paraíba
-centro_lat = grid.geometry.centroid.y.mean()
-centro_lon = grid.geometry.centroid.x.mean()
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
 
-mapa = folium.Map(
-    location=[centro_lat, centro_lon],
-    zoom_start=8,
-    tiles='OpenStreetMap'
-)
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-# Adicionar mapa base de Imagem de Satélite
-folium.TileLayer(
-    tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attr='Esri',
-    name='Imagem de Satélite (Esri)',
-    overlay=False
-).add_to(mapa)
+      - name: Instalar Dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install geopandas folium mapclassify
 
-# 3. Adicionar o Grid (desativado por defeito para não poluir a vista)
-folium.GeoJson(
-    grid,
-    name='Grid de Amostragem (2km x 2km)',
-    show=False,
-    style_function=lambda x: {
-        'fillColor': '#3186cc',
-        'color': '#555555',
-        'weight': 0.8,
-        'fillOpacity': 0.1
-    },
-    tooltip=folium.GeoJsonTooltip(
-        fields=list(grid.columns.drop('geometry')),
-        localize=True
-    )
-).add_to(mapa)
+      - name: Executar Script do Mapa
+        run: python gerar_mapa.py
 
-# 4. Descobrir a coluna de espécies
-colunas_possiveis = ['NM_ESPECIE', 'especie', 'ESPECIE', 'species', 'Species', 'nome_cient']
-coluna_especie = next((c for c in colunas_possiveis if c in poligonos_fauna.columns), None)
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v4
 
-if not coluna_especie:
-    colunas_texto = poligonos_fauna.select_dtypes(include=['object']).columns
-    coluna_especie = colunas_texto[0] if len(colunas_texto) > 0 else None
+      - name: Upload dos Artefatos da Página
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
 
-# 5. Criar camadas individuais por espécie
-if coluna_especie:
-    especies_unicas = sorted(poligonos_fauna[coluna_especie].dropna().unique())
-    
-    for especie in especies_unicas:
-        grupo_especie = folium.FeatureGroup(name=f"Espécie: {especie}", show=False)
-        
-        # Polígono da espécie
-        poly_sub = poligonos_fauna[poligonos_fauna[coluna_especie] == especie]
-        folium.GeoJson(
-            poly_sub,
-            style_function=lambda x: {
-                'fillColor': '#e65100',
-                'color': '#b23c00',
-                'weight': 2,
-                'fillOpacity': 0.4
-            },
-            tooltip=folium.GeoJsonTooltip(
-                fields=list(poly_sub.columns.drop('geometry')),
-                localize=True
-            )
-        ).add_to(grupo_especie)
-        
-        # Pontos da espécie (se existirem)
-        if tem_pontos and coluna_especie in pontos_fauna.columns:
-            pontos_sub = pontos_fauna[pontos_fauna[coluna_especie] == especie]
-            if not pontos_sub.empty:
-                folium.GeoJson(
-                    pontos_sub,
-                    marker=folium.CircleMarker(radius=4, color='darkred', fill=True, fill_color='red'),
-                    tooltip=folium.GeoJsonTooltip(fields=list(pontos_sub.columns.drop('geometry')))
-                ).add_to(grupo_especie)
-                
-        grupo_especie.add_to(mapa)
-else:
-    # Se não encontrar coluna de espécie, adiciona os polígonos individualmente
-    for idx, row in poligonos_fauna.iterrows():
-        grupo = folium.FeatureGroup(name=f"Polígono {idx + 1}", show=False)
-        folium.GeoJson(
-            row['geometry'],
-            style_function=lambda x: {'fillColor': '#e65100', 'color': '#b23c00', 'weight': 2, 'fillOpacity': 0.4}
-        ).add_to(grupo)
-        grupo.add_to(mapa)
-
-# 6. Controlo de Camadas
-folium.LayerControl(collapsed=False).add_to(mapa)
-
-# 7. Guardar o mapa
-mapa.save('index.html')
-print("NOVO SCRIPT EXECUTADO COM SUCESSO!")
+      - name: Deploy no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
