@@ -3,16 +3,16 @@ import folium
 
 # 1. Carregar os dados
 grid = gpd.read_file('grid_2kmX2km.shp').to_crs(epsg=4326)
-poligonos = gpd.read_file('Poligono_ESPECIES_anfibios.shp').to_crs(epsg=4326)
+poligonos_fauna = gpd.read_file('Poligono_ESPECIES_anfibios.shp').to_crs(epsg=4326)
 
-# Tentar carregar pontos
+# Carregar pontos se o ficheiro existir
 try:
-    pontos = gpd.read_file('lista_ESPECIES_anfibios.shp').to_crs(epsg=4326)
+    pontos_fauna = gpd.read_file('lista_ESPECIES_anfibios.shp').to_crs(epsg=4326)
     tem_pontos = True
 except Exception:
     tem_pontos = False
 
-# 2. Centrar o mapa
+# 2. Centrar o mapa no Grid/Paraíba
 centro_lat = grid.geometry.centroid.y.mean()
 centro_lon = grid.geometry.centroid.x.mean()
 
@@ -22,7 +22,7 @@ mapa = folium.Map(
     tiles='OpenStreetMap'
 )
 
-# Adicionar Imagem de Satélite
+# Adicionar mapa base de Imagem de Satélite
 folium.TileLayer(
     tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attr='Esri',
@@ -30,7 +30,7 @@ folium.TileLayer(
     overlay=False
 ).add_to(mapa)
 
-# 3. Adicionar o Grid (desativado por padrão)
+# 3. Adicionar o Grid (desativado por defeito)
 folium.GeoJson(
     grid,
     name='Grid de Amostragem (2km x 2km)',
@@ -40,48 +40,68 @@ folium.GeoJson(
         'color': '#555555',
         'weight': 0.8,
         'fillOpacity': 0.1
-    }
+    },
+    tooltip=folium.GeoJsonTooltip(
+        fields=list(grid.columns.drop('geometry')),
+        localize=True
+    )
 ).add_to(mapa)
 
-# 4. Tentar identificar a coluna de nome da espécie
-colunas_texto = poligonos.select_dtypes(include=['object']).columns.tolist()
+# 4. Descobrir a coluna de espécies
+colunas_possiveis = ['NM_ESPECIE', 'especie', 'ESPECIE', 'species', 'Species', 'nome_cient']
+coluna_especie = next((c for c in colunas_possiveis if c in poligonos_fauna.columns), None)
 
-if colunas_texto:
-    col_nome = colunas_texto[0] # pega a primeira coluna de texto
-    for valor_especie in sorted(poligonos[col_nome].dropna().unique()):
-        grupo = folium.FeatureGroup(name=f"Espécie: {valor_especie}", show=False)
+if not coluna_especie:
+    colunas_texto = poligonos_fauna.select_dtypes(include=['object']).columns
+    coluna_especie = colunas_texto[0] if len(colunas_texto) > 0 else None
+
+# 5. Criar camadas individuais por espécie
+if coluna_especie:
+    especies_unicas = sorted(poligonos_fauna[coluna_especie].dropna().unique())
+    
+    for especie in especies_unicas:
+        grupo_especie = folium.FeatureGroup(name=f"Espécie: {especie}", show=False)
         
-        # Filtra polígonos
-        sub_poly = poligonos[poligonos[col_nome] == valor_especie]
+        # Polígono da espécie
+        poly_sub = poligonos_fauna[poligonos_fauna[coluna_especie] == especie]
         folium.GeoJson(
-            sub_poly,
-            style_function=lambda x: {'fillColor': '#ff7800', 'color': '#ff7800', 'weight': 2, 'fillOpacity': 0.4},
-            tooltip=folium.GeoJsonTooltip(fields=list(sub_poly.columns.drop('geometry')))
-        ).add_to(grupo)
+            poly_sub,
+            style_function=lambda x: {
+                'fillColor': '#e65100',
+                'color': '#b23c00',
+                'weight': 2,
+                'fillOpacity': 0.4
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=list(poly_sub.columns.drop('geometry')),
+                localize=True
+            )
+        ).add_to(grupo_especie)
         
-        # Filtra pontos (se houver a mesma coluna nos pontos)
-        if tem_pontos and col_nome in pontos.columns:
-            sub_pts = pontos[pontos[col_nome] == valor_especie]
-            if not sub_pts.empty:
+        # Pontos da espécie (se existirem)
+        if tem_pontos and coluna_especie in pontos_fauna.columns:
+            pontos_sub = pontos_fauna[pontos_fauna[coluna_especie] == especie]
+            if not pontos_sub.empty:
                 folium.GeoJson(
-                    sub_pts,
-                    marker=folium.CircleMarker(radius=4, color='red', fill=True, fill_color='red'),
-                    tooltip=folium.GeoJsonTooltip(fields=list(sub_pts.columns.drop('geometry')))
-                ).add_to(grupo)
+                    pontos_sub,
+                    marker=folium.CircleMarker(radius=4, color='darkred', fill=True, fill_color='red'),
+                    tooltip=folium.GeoJsonTooltip(fields=list(pontos_sub.columns.drop('geometry')))
+                ).add_to(grupo_especie)
                 
-        grupo.add_to(mapa)
+        grupo_especie.add_to(mapa)
 else:
-    # Se não houver coluna de texto, adiciona todos individualmente por índice
-    for idx, row in poligonos.iterrows():
+    # Se não encontrar coluna de espécie, adiciona os polígonos individualmente
+    for idx, row in poligonos_fauna.iterrows():
         grupo = folium.FeatureGroup(name=f"Polígono {idx + 1}", show=False)
         folium.GeoJson(
             row['geometry'],
-            style_function=lambda x: {'fillColor': '#ff7800', 'color': '#ff7800', 'weight': 2, 'fillOpacity': 0.4}
+            style_function=lambda x: {'fillColor': '#e65100', 'color': '#b23c00', 'weight': 2, 'fillOpacity': 0.4}
         ).add_to(grupo)
         grupo.add_to(mapa)
 
-# 5. Adicionar Controle de Camadas
+# 6. Controlo de Camadas
 folium.LayerControl(collapsed=False).add_to(mapa)
 
-# Guardar
+# 7. Guardar o mapa
 mapa.save('index.html')
+print("NOVO SCRIPT EXECUTADO COM SUCESSO!")
